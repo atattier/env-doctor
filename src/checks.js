@@ -102,8 +102,8 @@ export const checks = [
       if (ctx.offline) {
         return { level: "skip", detail: "离线模式（--offline），跳过网络检查" };
       }
-      const current = await getCurrentRegistry(ctx.dir);
-      const r = await fetchWithTimeout(new URL(current + (current.endsWith("/") ? "" : "/") + CONNECTIVITY_PROBE), { timeoutMs: 8000, method: "HEAD" });
+      const current = await getCurrentRegistry(ctx.dir, ctx.timeoutMs);
+      const r = await fetchWithTimeout(new URL(current + (current.endsWith("/") ? "" : "/") + CONNECTIVITY_PROBE), { timeoutMs: ctx.timeoutMs, method: "HEAD" });
       if (!r.ok && r.aborted) {
         return {
           level: "fail",
@@ -124,14 +124,14 @@ export const checks = [
       if (ctx.offline) {
         return { level: "skip", detail: "离线模式（--offline），跳过网络检查" };
       }
-      const current = await getCurrentRegistry(ctx.dir);
+      const current = await getCurrentRegistry(ctx.dir, ctx.timeoutMs);
       if (/registry\.npmjs\.org/.test(current)) {
         return { level: "skip", detail: "当前已是官方源，无镜像滞后问题" };
       }
       // 用一个镜像滞后高发包做对照：scoped optional 依赖最常出现"官方有、镜像没有"
       const probe = "@dsh-ops/bash-win32-x64";
-      const official = await fetchWithTimeout(OFFICIAL_REGISTRY + probe, { timeoutMs: 8000 });
-      const mirror = await fetchWithTimeout(current.replace(/\/$/, "") + "/" + probe, { timeoutMs: 8000 });
+      const official = await fetchWithTimeout(OFFICIAL_REGISTRY + probe, { timeoutMs: ctx.timeoutMs });
+      const mirror = await fetchWithTimeout(current.replace(/\/$/, "") + "/" + probe, { timeoutMs: ctx.timeoutMs });
       if (!official.ok) {
         return { level: "skip", detail: "官方源探测失败，跳过对照" };
       }
@@ -260,7 +260,7 @@ export const checks = [
     title: "NO_PROXY 是否排除当前 registry",
     async run(ctx) {
       const noProxy = process.env.NO_PROXY || process.env.no_proxy || "";
-      const registry = await getCurrentRegistry(ctx.dir);
+      const registry = await getCurrentRegistry(ctx.dir, ctx.timeoutMs);
       const host = new URL(registry).host.toLowerCase();
       if (!noProxy) {
         return {
@@ -378,9 +378,9 @@ export const checks = [
   },
 ];
 
-async function getCurrentRegistry(cwd) {
+async function getCurrentRegistry(cwd, timeoutMs = 6000) {
   // 带 cwd 才能读到项目级 .npmrc（scope 覆盖、registry 重写都在这里）
-  const r = await runCmd("npm", ["config", "get", "registry"], { timeoutMs: 6000, cwd });
+  const r = await runCmd("npm", ["config", "get", "registry"], { timeoutMs, cwd });
   if (r.ok && r.stdout.trim().startsWith("http")) return r.stdout.trim();
   return OFFICIAL_REGISTRY;
 }

@@ -110,7 +110,7 @@ npm test          # 单元测试（含真实命令与网络探测）
 npm run selfcheck # 对自己跑一次完整体检
 ```
 
-CI 在 Ubuntu / Windows × Node 18 / 20 / 22 六种组合上运行测试与 CLI 冒烟。
+CI 在 Ubuntu / Windows × Node 22 / 24 上运行测试与 CLI 冒烟（18/20 已过官方 EOL，不再进矩阵）。
 
 ## License
 

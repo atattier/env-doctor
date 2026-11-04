@@ -9,6 +9,12 @@
   "engines": {
     "node": ">=18"
   },
+  "exports": {
+    ".": "./bin/env-doctor.js",
+    "./doctor": "./src/doctor.js",
+    "./checks": "./src/checks.js",
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "test": "node test/run.js",
     "selfcheck": "node bin/env-doctor.js"
