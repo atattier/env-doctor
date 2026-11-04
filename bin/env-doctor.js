@@ -1,30 +1,32 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { runAllChecks } from "../src/doctor.js";
+import { readFileSync, writeFileSync } from "node:fs";
+import { runAllChecks, selectChecks } from "../src/doctor.js";
+import { checks } from "../src/checks.js";
 import { renderTerminalReport, renderJsonReport } from "../src/report.js";
 
 const args = process.argv.slice(2);
-const flags = {
-  json: args.includes("--json"),
-  dir: null,
-  timeoutMs: 8000,
-};
 
-const dirIdx = args.indexOf("--dir");
-if (dirIdx >= 0 && args[dirIdx + 1] && !args[dirIdx + 1].startsWith("--")) {
-  flags.dir = args[dirIdx + 1];
-}
-if (!flags.dir) flags.dir = process.cwd();
-
-const timeoutIdx = args.indexOf("--timeout");
-if (timeoutIdx >= 0 && args[timeoutIdx + 1]) {
-  const n = Number(args[timeoutIdx + 1]);
-  if (Number.isFinite(n) && n > 0) flags.timeoutMs = n * 1000;
+function readFlagValue(name) {
+  const idx = args.indexOf(name);
+  if (idx < 0) return null;
+  const value = args[idx + 1];
+  if (!value || value.startsWith("--")) {
+    console.error(`${name} 需要一个值`);
+    process.exit(2);
+  }
+  return value;
 }
 
 if (args.includes("--version") || args.includes("-v")) {
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   console.log(pkg.version);
+  process.exit(0);
+}
+
+if (args.includes("--list")) {
+  for (const c of checks) {
+    console.log(`${c.id.padEnd(24)} ${c.title}`);
+  }
   process.exit(0);
 }
 
@@ -35,22 +37,63 @@ if (args.includes("--help") || args.includes("-h")) {
   env-doctor [选项]
 
 选项:
-  --json           以 JSON 输出（便于 CI / 脚本消费）
-  --dir <path>     指定项目目录（检查 lockfile / .npmrc），默认当前目录
-  --timeout <sec>  网络类检查的超时秒数，默认 8
-  -v, --version    显示版本号
-  -h, --help       显示本帮助
+  --json            以 JSON 输出（便于 CI / 脚本消费）
+  --dir <path>      指定项目目录（检查 lockfile / .npmrc），默认当前目录
+  --timeout <sec>   网络类检查的超时秒数，默认 8
+  --only <ids>      只跑指定检查项（逗号分隔 id，见 --list）
+  --skip <ids>      跳过指定检查项（逗号分隔 id）
+  --offline         离线模式：跳过所有网络类检查
+  --report <file>   把 JSON 报告写入文件（stdout 仍按原样输出）
+  -v, --version     显示版本号
+  -h, --help        显示本帮助
 
-检查项:
-  1  Node.js 版本与支持状态          6  双层代理配置（git config + 环境变量）
-  2  包管理器（npm/pnpm/yarn）       7  NO_PROXY 是否排除当前 registry
-  3  当前 registry 连通性            8  lockfile 与 package.json 一致性
-  4  镜像同步滞后检测（对照官方源）   9  项目路径含中文/空格
-  5  .npmrc scope 源覆盖             10  Git 可用性与用户配置`);
+检查项（env-doctor --list 查看完整 id 与标题）:
+   1  Node.js 版本与 EOL 支持状态     8   双层代理配置（git config + 环境变量）
+   2  Node 多版本共存                 9   代理端点一致性
+   3  包管理器（npm/pnpm/yarn）      10   NO_PROXY 是否排除当前 registry
+   4  当前 npm registry 连通性        11  lockfile 与 package.json 一致性
+   5  镜像同步滞后检测                12  磁盘剩余空间
+   6  .npmrc scope 源覆盖             13  项目路径含中文/空格
+   7  npm TLS 校验（strict-ssl）      14  Git 可用性与用户配置
+
+退出码: 0 全部通过/警告，1 存在 fail 项，2 用法错误`);
   process.exit(0);
 }
 
-const report = await runAllChecks({ dir: flags.dir, timeoutMs: flags.timeoutMs });
+const only = readFlagValue("--only");
+const skip = readFlagValue("--skip");
+const { unknown } = selectChecks({ only, skip });
+if (unknown.length > 0) {
+  console.error(`未知的检查项 id：${unknown.join(", ")}（用 --list 查看全部）`);
+  process.exit(2);
+}
+
+const flags = { json: args.includes("--json"), dir: null, timeoutMs: 8000 };
+flags.dir = readFlagValue("--dir") ?? process.cwd();
+
+const timeoutValue = readFlagValue("--timeout");
+if (timeoutValue) {
+  const n = Number(timeoutValue);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.error("--timeout 需要一个正数（秒）");
+    process.exit(2);
+  }
+  flags.timeoutMs = n * 1000;
+}
+
+const reportFile = readFlagValue("--report");
+const offline = args.includes("--offline");
+
+const report = await runAllChecks({ dir: flags.dir, timeoutMs: flags.timeoutMs, offline, only, skip });
+
+if (reportFile) {
+  try {
+    writeFileSync(reportFile, renderJsonReport(report) + "\n", "utf8");
+  } catch (err) {
+    console.error(`无法写入报告文件 ${reportFile}：${err.message}`);
+    process.exit(2);
+  }
+}
 
 if (flags.json) {
   console.log(renderJsonReport(report));

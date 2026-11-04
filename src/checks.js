@@ -8,6 +8,28 @@ const OFFICIAL_REGISTRY = "https://registry.npmjs.org/";
 // 报告里会出现「可达（HTTP 404）」这种自相矛盾的文案。
 const CONNECTIVITY_PROBE = "npm";
 
+// Node 官方 LTS 生命周期表（EOL 日期，UTC）。奇数号 Current 只支持约 6 个月，不进表。
+// 数据源：nodejs.org 发布计划 / endoflife.date/nodejs；出新的偶数号 LTS 时更新此表。
+export const NODE_EOL = {
+  14: "2023-04-30",
+  16: "2023-09-11",
+  18: "2025-04-30",
+  20: "2026-04-30",
+  22: "2027-04-30",
+  24: "2028-04-30",
+  26: "2029-04-30",
+};
+
+/** 纯函数：给定主版本号与当前时间，返回 EOL 判定。state ∈ eol | soon | ok | current-odd | unknown */
+export function nodeEolStatus(major, now = new Date()) {
+  const eol = NODE_EOL[major];
+  if (!eol) return { state: major % 2 === 1 ? "current-odd" : "unknown", eol: null };
+  const days = Math.ceil((new Date(`${eol}T00:00:00Z`) - now) / 86400000);
+  if (days <= 0) return { state: "eol", eol, days };
+  if (days <= 180) return { state: "soon", eol, days };
+  return { state: "ok", eol, days };
+}
+
 export const checks = [
   {
     id: "node-version",
@@ -15,16 +37,41 @@ export const checks = [
     async run() {
       const v = process.version;
       const major = Number(v.slice(1).split(".")[0]);
-      // Node 官方维护线：偶数号 LTS 约 30 个月，奇数号 Current 约 6 个月。
-      // 这里用保守近似：>=18 都算可用，奇数号提示不是 LTS。
-      const isEven = major % 2 === 0;
-      if (major < 18) {
-        return { level: "fail", detail: `${v} 已低于最低支持线（18）`, advice: "升级到 Node 18+ LTS（如 22.x）" };
+      const s = nodeEolStatus(major);
+      if (major < 14 || s.state === "eol") {
+        return { level: "fail", detail: `${v} 已于 ${s.eol ?? "更早"} 结束官方支持（EOL）`, advice: "升级到仍在支持期的偶数号 LTS（22 / 24）" };
       }
-      if (!isEven) {
+      if (s.state === "soon") {
+        return { level: "warn", detail: `${v} 将于 ${s.eol} 结束官方支持（剩约 ${s.days} 天）`, advice: "提前规划升级到最新偶数号 LTS" };
+      }
+      if (s.state === "current-odd") {
         return { level: "warn", detail: `${v} 为奇数号 Current 版本，非 LTS`, advice: "生产/求职环境建议使用偶数号 LTS 版本" };
       }
-      return { level: "pass", detail: `${v}（偶数号 LTS 线）` };
+      if (s.state === "unknown") {
+        return { level: "warn", detail: `${v} 不在内置 EOL 表中，无法确认支持状态`, advice: "对照 nodejs.org 发布计划确认是否仍在支持期；若是新 LTS，请更新 checks.js 的 NODE_EOL 表" };
+      }
+      return { level: "pass", detail: `${v}（LTS，官方支持至 ${s.eol}）` };
+    },
+  },
+  {
+    id: "node-installations",
+    title: "Node 多版本共存",
+    async run() {
+      const listCmd = process.platform === "win32" ? "where.exe" : "which";
+      const args = process.platform === "win32" ? ["node"] : ["-a", "node"];
+      const r = await runCmd(listCmd, args, { timeoutMs: 5000 });
+      if (!r.ok) {
+        return { level: "skip", detail: "无法枚举 node 路径，跳过" };
+      }
+      const locations = [...new Set(r.stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean))];
+      if (locations.length <= 1) {
+        return { level: "pass", detail: `唯一安装：${locations[0] || process.execPath}` };
+      }
+      return {
+        level: "warn",
+        detail: `发现 ${locations.length} 个 node 安装：${locations.join("；")}`,
+        advice: "多版本并存时 PATH 顺序决定实际版本，容易出现「刚装的版本没生效」。建议用 nvm-windows / volta / fnm 统一管理并清理散装安装",
+      };
     },
   },
   {
@@ -52,6 +99,9 @@ export const checks = [
     id: "registry-connectivity",
     title: "当前 npm registry 连通性",
     async run(ctx) {
+      if (ctx.offline) {
+        return { level: "skip", detail: "离线模式（--offline），跳过网络检查" };
+      }
       const current = await getCurrentRegistry(ctx.dir);
       const r = await fetchWithTimeout(new URL(current + (current.endsWith("/") ? "" : "/") + CONNECTIVITY_PROBE), { timeoutMs: 8000, method: "HEAD" });
       if (!r.ok && r.aborted) {
@@ -71,6 +121,9 @@ export const checks = [
     id: "mirror-lag",
     title: "镜像同步滞后检测（对照官方源）",
     async run(ctx) {
+      if (ctx.offline) {
+        return { level: "skip", detail: "离线模式（--offline），跳过网络检查" };
+      }
       const current = await getCurrentRegistry(ctx.dir);
       if (/registry\.npmjs\.org/.test(current)) {
         return { level: "skip", detail: "当前已是官方源，无镜像滞后问题" };
@@ -123,6 +176,24 @@ export const checks = [
     },
   },
   {
+    id: "npm-strict-ssl",
+    title: "npm TLS 校验（strict-ssl）",
+    async run(ctx) {
+      const r = await runCmd("npm", ["config", "get", "strict-ssl"], { timeoutMs: 6000, cwd: ctx.dir });
+      if (!r.ok) {
+        return { level: "skip", detail: "无法读取 npm 配置，跳过" };
+      }
+      if (r.stdout.trim().toLowerCase() === "false") {
+        return {
+          level: "fail",
+          detail: "strict-ssl=false：npm 已全局关闭 TLS 证书校验",
+          advice: "这是公司代理自签证书场景的一刀切绕过，等于对中间人完全放行。改用 NODE_EXTRA_CA_CERTS=<公司根证书路径>（或 .npmrc 的 cafile）恢复校验",
+        };
+      }
+      return { level: "pass", detail: "strict-ssl 开启，npm 走正常 TLS 校验" };
+    },
+  },
+  {
     id: "git-proxy-layer",
     title: "双层代理配置（git config + 环境变量）",
     async run() {
@@ -151,6 +222,37 @@ export const checks = [
         detail: `仅配置了${layer}代理，缺${hasGit ? "环境变量层" : "git 层"}`,
         advice: `补上${other}，否则会出现"git 能拉、npm 超时"或反之的半可用状态`,
       };
+    },
+  },
+  {
+    id: "proxy-consistency",
+    title: "代理端点一致性",
+    async run() {
+      const gitR = await runCmd("git", ["config", "--global", "--get", "http.proxy"], { timeoutMs: 5000 });
+      const gitProxy = gitR.ok ? gitR.stdout.trim() : "";
+      const envHttp = process.env.HTTP_PROXY || process.env.http_proxy || "";
+      const envHttps = process.env.HTTPS_PROXY || process.env.https_proxy || "";
+      // 归一化到 protocol//host:port 再比，忽略末尾斜杠与路径差异
+      const norm = u => {
+        try { const x = new URL(u); return `${x.protocol}//${x.host}`; } catch { return u.replace(/\/$/, ""); }
+      };
+      const endpoints = [];
+      if (gitProxy) endpoints.push(["git http.proxy", gitProxy]);
+      if (envHttp) endpoints.push(["HTTP_PROXY", envHttp]);
+      if (envHttps) endpoints.push(["HTTPS_PROXY", envHttps]);
+      if (endpoints.length < 2) {
+        return { level: "pass", detail: endpoints.length ? `仅一个代理端点：${endpoints.map(e => e.join(" → ")).join("；")}` : "无代理配置，跳过一致性对照" };
+      }
+      const [, firstUrl] = endpoints[0];
+      const mismatched = endpoints.slice(1).filter(([, u]) => norm(u) !== norm(firstUrl));
+      if (mismatched.length > 0) {
+        return {
+          level: "warn",
+          detail: `各层代理指向不同端点：${endpoints.map(e => e.join(" → ")).join("；")}`,
+          advice: "git、Node、npm 各挑一个端点走，出口不一致时会出现「有的工具通、有的工具超时」且难定位。统一为同一 host:port（真实案例：xray 混合端口 10808 同时服务 http/https）",
+        };
+      }
+      return { level: "pass", detail: `各层代理一致：${endpoints.map(e => e.join(" → ")).join("；")}` };
     },
   },
   {
@@ -215,6 +317,30 @@ export const checks = [
         detail: "有 package.json 但没有任何 lockfile",
         advice: "提交 lockfile 到版本库，保证团队成员与 CI 安装结果一致",
       };
+    },
+  },
+  {
+    id: "disk-space",
+    title: "磁盘剩余空间",
+    async run(ctx) {
+      if (typeof fs.statfs !== "function") {
+        return { level: "skip", detail: "当前 Node 版本不支持 fs.statfs（需 18.15+），跳过" };
+      }
+      try {
+        const target = fs.existsSync(ctx.dir) ? ctx.dir : os.homedir();
+        const stat = await fs.promises.statfs(target);
+        const freeGiB = (Number(BigInt(stat.bsize) * BigInt(stat.bavail)) / 1024 ** 3);
+        const human = `${freeGiB.toFixed(1)} GB`;
+        if (freeGiB < 1) {
+          return { level: "fail", detail: `${target} 所在卷仅剩 ${human}`, advice: "npm/pnpm 缓存与原生模块编译很容易吃掉数 GB，先清理：npm cache clean --force 或 pnpm store prune" };
+        }
+        if (freeGiB < 5) {
+          return { level: "warn", detail: `${target} 所在卷剩余 ${human}（低于 5 GB 安全水位）`, advice: "建议清理包管理器缓存或转移大目录，避免安装/编译中途爆盘" };
+        }
+        return { level: "pass", detail: `${target} 所在卷剩余 ${human}` };
+      } catch (err) {
+        return { level: "skip", detail: `无法读取磁盘信息：${err.message}` };
+      }
     },
   },
   {

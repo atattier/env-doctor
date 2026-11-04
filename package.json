@@ -1,6 +1,6 @@
 {
   "name": "env-doctor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Node.js/pnpm/Git 开发环境体检 CLI：一键巡检版本、镜像源、双层代理、lockfile 一致性，输出诊断与修复建议",
   "bin": {
     "env-doctor": "bin/env-doctor.js"

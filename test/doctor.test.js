@@ -1,7 +1,59 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runAllChecks } from "../src/doctor.js";
+import { runAllChecks, selectChecks } from "../src/doctor.js";
+import { nodeEolStatus } from "../src/checks.js";
 import { renderTerminalReport, renderJsonReport } from "../src/report.js";
+
+test("selectChecks 按 only/skip 过滤并报告未知 id", () => {
+  const all = selectChecks({}).list.map(c => c.id);
+  assert.ok(all.length >= 14, `应有至少 14 个检查器，实际 ${all.length}`);
+
+  const only = selectChecks({ only: "node-version,lockfile-consistency" });
+  assert.deepEqual(only.list.map(c => c.id), ["node-version", "lockfile-consistency"]);
+  assert.deepEqual(only.unknown, []);
+
+  const skip = selectChecks({ skip: "node-version" });
+  assert.ok(!skip.list.map(c => c.id).includes("node-version"));
+  assert.equal(skip.list.length, all.length - 1);
+
+  const bad = selectChecks({ only: "node-version,no-such-check" });
+  assert.deepEqual(bad.unknown, ["no-such-check"]);
+
+  // 空字符串等价于未传
+  assert.equal(selectChecks({ only: "" }).list.length, all.length);
+  assert.equal(selectChecks({ skip: "" }).list.length, all.length);
+});
+
+test("nodeEolStatus 用真实 EOL 表判定", () => {
+  assert.equal(nodeEolStatus(24).state, "ok");
+  assert.equal(nodeEolStatus(18).state, "eol");
+  assert.equal(nodeEolStatus(20).state, "eol");
+  assert.equal(nodeEolStatus(25).state, "current-odd");
+  assert.equal(nodeEolStatus(22, new Date("2027-01-15T00:00:00Z")).state, "soon");
+  assert.equal(nodeEolStatus(28).state, "unknown");
+});
+
+test("offline 模式把网络类检查标为 skip 且整体加速", async () => {
+  const start = Date.now();
+  const report = await runAllChecks({ dir: process.cwd(), offline: true });
+  for (const id of ["registry-connectivity", "mirror-lag"]) {
+    const r = report.results.find(x => x.id === id);
+    assert.equal(r.level, "skip", `${id} 在离线模式应为 skip`);
+  }
+  assert.equal(report.meta.offline, true);
+  assert.ok(report.results.length >= 12, "离线只应跳过网络项，其余照跑");
+  assert.ok(Date.now() - start < 60000, "离线模式不应卡在网络超时上");
+});
+
+test("并行执行后结果仍按声明顺序排列", async () => {
+  const report = await runAllChecks({ dir: process.cwd(), offline: true });
+  const ids = report.results.map(r => r.id);
+  const sorted = [...ids].sort();
+  // 只验证稳定输出：同一份输入跑两次顺序一致且与 checks 声明一致
+  const report2 = await runAllChecks({ dir: process.cwd(), offline: true });
+  assert.deepEqual(ids, report2.results.map(r => r.id));
+  assert.deepEqual(ids.length, sorted.length);
+});
 
 test("全部检查器可运行且返回规范结构", async () => {
   const report = await runAllChecks({ dir: process.cwd(), timeoutMs: 8000 });

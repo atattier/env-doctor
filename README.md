@@ -24,14 +24,31 @@ env-doctor
 ```bash
 env-doctor [选项]
 
-  --json           以 JSON 输出（便于 CI / 脚本消费）
-  --dir <path>     指定项目目录（检查 lockfile / .npmrc），默认当前目录
-  --timeout <sec>  网络类检查的超时秒数，默认 8
-  -v, --version    显示版本
-  -h, --help       显示帮助
+  --json            以 JSON 输出（便于 CI / 脚本消费）
+  --dir <path>      指定项目目录（检查 lockfile / .npmrc），默认当前目录
+  --timeout <sec>   网络类检查的超时秒数，默认 8
+  --only <ids>      只跑指定检查项（逗号分隔 id，见 --list）
+  --skip <ids>      跳过指定检查项（逗号分隔 id）
+  --offline         离线模式：跳过所有网络类检查
+  --report <file>   把 JSON 报告写入文件（stdout 仍按原样输出）
+  -v, --version     显示版本号
+  -h, --help        显示帮助
 ```
 
-退出码：存在 `fail` 项时返回 `1`，否则 `0` —— 可直接用于 CI 门禁。
+退出码：`0` 通过/警告、`1` 存在 fail 项、`2` 用法错误 —— 可直接用于 CI 门禁。
+
+### 常用组合
+
+```bash
+# CI 里只要 lockfile 与路径检查，不要网络探测
+env-doctor --only lockfile-consistency,path-safety --json
+
+# 全量体检，同时留档 JSON 报告
+env-doctor --report env-report.json
+
+# 断网/弱网环境下先跑本地项
+env-doctor --offline
+```
 
 ### 示例输出
 
@@ -52,20 +69,30 @@ env-doctor 环境体检报告
 
 ## 检查项
 
-| # | 检查 | 说明 |
-|---|---|---|
-| 1 | Node.js 版本与支持状态 | 低于 18 判失败；奇数号 Current 版本提示非 LTS |
-| 2 | 包管理器 | npm / pnpm / yarn 版本盘点，npm 缺失视为 Node 安装损坏 |
-| 3 | registry 连通性 | 对当前 registry 做带超时的探测，超时时提示先查代理端口 |
-| 4 | 镜像同步滞后 | 以 scoped 包为探针，对照官方源与镜像的版本集合 |
-| 5 | `.npmrc` scope 源覆盖 | 列出项目级 / 用户级的 scope registry 配置 |
-| 6 | 双层代理 | `git config http.proxy` 与环境变量各管一套网络栈，缺一层即告警 |
-| 7 | `NO_PROXY` | 代理是否错误地把当前 registry 也塞进隧道 |
-| 8 | lockfile 一致性 | `pnpm-lock.yaml` 是否覆盖 `package.json` 中声明的依赖 |
-| 9 | 路径安全 | 项目路径含中文 / 空格时的工具链兼容性风险 |
-| 10 | Git 可用性与身份 | `user.name` / `user.email` 是否配置 |
+| # | id | 检查 | 说明 |
+|---|---|---|---|
+| 1 | `node-version` | Node 版本与 EOL | 按官方 LTS 生命周期表判定：已 EOL 判失败，剩 180 天内提前告警 |
+| 2 | `node-installations` | Node 多版本共存 | PATH 上有多个 node 时告警（「刚装的版本没生效」的常见根源） |
+| 3 | `package-managers` | 包管理器 | npm / pnpm / yarn 版本盘点，npm 缺失视为 Node 安装损坏 |
+| 4 | `registry-connectivity` | registry 连通性 | 对当前 registry 做带超时的探测，超时时提示先查代理端口 |
+| 5 | `mirror-lag` | 镜像同步滞后 | 以 scoped 包为探针，对照官方源与镜像的版本集合 |
+| 6 | `npmrc-scope-override` | `.npmrc` scope 源覆盖 | 列出项目级 / 用户级的 scope registry 配置 |
+| 7 | `npm-strict-ssl` | npm TLS 校验 | `strict-ssl=false` 判失败：自签证书绕过应改用 `NODE_EXTRA_CA_CERTS` |
+| 8 | `git-proxy-layer` | 双层代理 | `git config http.proxy` 与环境变量各管一套网络栈，缺一层即告警 |
+| 9 | `proxy-consistency` | 代理端点一致性 | git / HTTP_PROXY / HTTPS_PROXY 指向不同端点时告警 |
+| 10 | `no-proxy-registry` | `NO_PROXY` | 代理是否错误地把当前 registry 也塞进隧道 |
+| 11 | `lockfile-consistency` | lockfile 一致性 | `pnpm-lock.yaml` 是否覆盖 `package.json` 中声明的依赖 |
+| 12 | `disk-space` | 磁盘剩余空间 | 低于 5 GB 告警、1 GB 判失败（缓存与原生编译很吃盘） |
+| 13 | `path-safety` | 路径安全 | 项目路径含中文 / 空格时的工具链兼容性风险 |
+| 14 | `git-config` | Git 可用性与身份 | `user.name` / `user.email` 是否配置 |
 
-结果分四级：`pass` / `warn` / `fail` / `skip`。
+结果分四级：`pass` / `warn` / `fail` / `skip`。全部检查项的 id 用 `env-doctor --list` 查看。
+
+## 与同类工具的关系
+
+- **`npm doctor`**（npm 内置）：覆盖连通性与版本；env-doctor 在其之外补齐镜像滞后、双层代理、`NO_PROXY`、lockfile 一致性等「包管理器不管、但装包必踩」的检查。
+- **`envinfo`**：擅长罗列环境信息（SDK / IDE / 浏览器）；env-doctor 不做信息收集，只做「判健康 + 给修复建议」。
+- **`node-environment-check`**：最小化版本校验；env-doctor 的 `--json` + 退出码约定与其同构，可直接替换进 CI。
 
 ## 设计原则
 
@@ -86,3 +113,7 @@ CI 在 Ubuntu / Windows × Node 18 / 20 / 22 六种组合上运行测试与 CLI 
 ## License
 
 [MIT](LICENSE)
+
+## Changelog
+
+见 [CHANGELOG.md](CHANGELOG.md)。
