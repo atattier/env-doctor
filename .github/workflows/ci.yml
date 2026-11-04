@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [18, 20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # Windows 上 npm 全局探测依赖 where.exe；Linux/macOS 需要真实网络做连通性检查
+      - name: Run tests
+        run: npm test
+      - name: Self-check (CLI smoke test)
+        run: node bin/env-doctor.js --json > report.json || true
+      - name: Validate self-check JSON
+        run: node -e "const r=require('./report.json'); if(!r.results||r.results.length<10) process.exit(1)"
