@@ -2,6 +2,17 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] — 2026-11-05
+
+### 变更
+
+- 补 `exports` 字段（`./doctor`、`./checks` 子路径导出），下游深导入在 strict exports 语义下稳定
+- CI 矩阵移除已过官方 EOL 的 Node 18/20，收敛为 22/24
+
+### 修复
+
+- `--timeout` 此前未传导到检查器内部（网络探测硬编码 8000/6000ms），现全部经 ctx.timeoutMs 生效
+
 ## [0.2.0] — 2026-11-05
 
 对标同类工具（npm doctor / envinfo / node-environment-check）后的第一次升级。
