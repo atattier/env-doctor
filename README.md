@@ -1,6 +1,8 @@
 # env-doctor
 
-一键体检 Node.js / pnpm / Git 开发环境：版本、registry 连通性、镜像同步滞后、`.npmrc` scope 覆盖、双层代理、`NO_PROXY`、lockfile 一致性，一条命令给出诊断与修复建议。
+`@atatier/env-doctor` — 一键体检 Node.js / pnpm / Git 开发环境：版本、registry 连通性、镜像同步滞后、`.npmrc` scope 覆盖、双层代理、`NO_PROXY`、lockfile 一致性，一条命令给出诊断与修复建议。
+
+> 包名说明：无 scope 的 `env-doctor` 与 npm 上已有包 `envdoctor` 触发名称相似度限制，故以 `@atatier/env-doctor` 发布；CLI 命令名仍是 `env-doctor`。
 
 > 设计来源：每一条检查都对应一次真实踩坑。比如「两个 npm 源都通，但装插件报所有安装源都无法连接」其实是 GitHub 不通；「装了代理后原本能用的 registry 反而超时」是因为 `NO_PROXY` 没排除镜像域。这些案例被固化成了检查项与建议文案。
 
@@ -12,10 +14,10 @@
 node bin/env-doctor.js
 ```
 
-或安装为全局 CLI：
+或安装为全局 CLI（装完命令名是 `env-doctor`）：
 
 ```bash
-npm i -g env-doctor
+npm i -g @atatier/env-doctor
 env-doctor
 ```
 

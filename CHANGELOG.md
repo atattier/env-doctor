@@ -20,6 +20,7 @@
 
 - 检查项由串行改为**并行执行**，整轮体检耗时明显下降（结果仍按声明顺序输出）
 - 报告 `meta` 新增 `offline`、`durationMs` 字段
+- 包名定为 `@atatier/env-doctor`：无 scope 的 `env-doctor` 触发 npm 名称相似度限制（与已有包 `envdoctor` 冲突），CLI 命令名仍为 `env-doctor`
 
 ### 修复
 
