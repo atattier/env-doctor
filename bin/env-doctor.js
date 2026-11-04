@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { runAllChecks } from "../src/doctor.js";
 import { renderTerminalReport, renderJsonReport } from "../src/report.js";
 
@@ -21,6 +22,12 @@ if (timeoutIdx >= 0 && args[timeoutIdx + 1]) {
   if (Number.isFinite(n) && n > 0) flags.timeoutMs = n * 1000;
 }
 
+if (args.includes("--version") || args.includes("-v")) {
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  console.log(pkg.version);
+  process.exit(0);
+}
+
 if (args.includes("--help") || args.includes("-h")) {
   console.log(`env-doctor — Node.js/pnpm/Git 开发环境体检
 
@@ -31,6 +38,7 @@ if (args.includes("--help") || args.includes("-h")) {
   --json           以 JSON 输出（便于 CI / 脚本消费）
   --dir <path>     指定项目目录（检查 lockfile / .npmrc），默认当前目录
   --timeout <sec>  网络类检查的超时秒数，默认 8
+  -v, --version    显示版本号
   -h, --help       显示本帮助
 
 检查项:

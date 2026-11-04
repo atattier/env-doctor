@@ -67,6 +67,24 @@ export async function fetchWithTimeout(url, { timeoutMs = 8000, method = "GET" }
   }
 }
 
+/**
+ * NO_PROXY 逐项匹配：精确主机，或点分边界后缀（".example.com" 与 "example.com" 等价）。
+ * 后缀项要求至少含一个点：否则 "org" 这类公共后缀会把整个 TLD 误判为已排除，
+ * 报告「已覆盖」而实际流量仍走代理。
+ */
+export function isHostCoveredByNoProxy(noProxy, host) {
+  const h = String(host).toLowerCase();
+  return String(noProxy)
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean)
+    .some(raw => {
+      const p = raw.replace(/^\./, "").toLowerCase();
+      if (p === "*" || h === p) return true;
+      return p.includes(".") && h.endsWith("." + p);
+    });
+}
+
 export function parseNpmrc(text) {
   const result = {};
   for (const line of text.split(/\r?\n/)) {

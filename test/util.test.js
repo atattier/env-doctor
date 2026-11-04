@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseNpmrc, runCmd, fetchWithTimeout } from "../src/util.js";
+import { parseNpmrc, runCmd, fetchWithTimeout, isHostCoveredByNoProxy } from "../src/util.js";
 
 test("parseNpmrc 解析 scope registry 与普通键", () => {
   const text = `
@@ -19,6 +19,19 @@ strict-ssl=true
 test("parseNpmrc 空输入返回空对象", () => {
   assert.deepEqual(parseNpmrc(""), {});
   assert.deepEqual(parseNpmrc("# only comments\n;more\n"), {});
+});
+
+test("isHostCoveredByNoProxy 按点分边界匹配", () => {
+  assert.equal(isHostCoveredByNoProxy("registry.npmjs.org", "registry.npmjs.org"), true);
+  assert.equal(isHostCoveredByNoProxy("npmjs.org", "registry.npmjs.org"), true);
+  assert.equal(isHostCoveredByNoProxy(".npmjs.org", "registry.npmjs.org"), true);
+  assert.equal(isHostCoveredByNoProxy("NPMJS.ORG", "registry.npmjs.org"), true);
+  assert.equal(isHostCoveredByNoProxy("localhost, 127.0.0.1", "registry.npmjs.org"), false);
+  // 裸片段不能误判：org 不是 npmjs.org 的后缀边界
+  assert.equal(isHostCoveredByNoProxy("org", "registry.npmjs.org"), false);
+  assert.equal(isHostCoveredByNoProxy("npmjs.org", "evilnpmjs.org"), false);
+  assert.equal(isHostCoveredByNoProxy("*", "registry.npmjs.org"), true);
+  assert.equal(isHostCoveredByNoProxy("", "registry.npmjs.org"), false);
 });
 
 test("runCmd 对不存在的命令返回结构化错误而不是抛出", async () => {

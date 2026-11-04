@@ -1,9 +1,12 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
-import { runCmd, fetchWithTimeout, parseNpmrc } from "./util.js";
+import { runCmd, fetchWithTimeout, parseNpmrc, isHostCoveredByNoProxy } from "./util.js";
 
 const OFFICIAL_REGISTRY = "https://registry.npmjs.org/";
+// 连通性探针用「一定存在」的包；不能用本包名——未发布时返回 404，
+// 报告里会出现「可达（HTTP 404）」这种自相矛盾的文案。
+const CONNECTIVITY_PROBE = "npm";
 
 export const checks = [
   {
@@ -39,7 +42,7 @@ export const checks = [
       }
       const missing = parts.filter(p => !p.version).map(p => p.cmd);
       const summary = parts.map(p => `${p.cmd} ${p.version ?? "缺失"}`).join("，");
-      if (missing.length === 2 && npm.version) {
+      if (missing.length === 0) {
         return { level: "pass", detail: summary };
       }
       return { level: "pass", detail: summary + `（${missing.join("/")} 未安装，如项目需要可补装）` };
@@ -48,9 +51,9 @@ export const checks = [
   {
     id: "registry-connectivity",
     title: "当前 npm registry 连通性",
-    async run() {
-      const current = await getCurrentRegistry();
-      const r = await fetchWithTimeout(new URL(current + (current.endsWith("/") ? "" : "/") + "env-doctor"), { timeoutMs: 8000, method: "HEAD" });
+    async run(ctx) {
+      const current = await getCurrentRegistry(ctx.dir);
+      const r = await fetchWithTimeout(new URL(current + (current.endsWith("/") ? "" : "/") + CONNECTIVITY_PROBE), { timeoutMs: 8000, method: "HEAD" });
       if (!r.ok && r.aborted) {
         return {
           level: "fail",
@@ -67,8 +70,8 @@ export const checks = [
   {
     id: "mirror-lag",
     title: "镜像同步滞后检测（对照官方源）",
-    async run() {
-      const current = await getCurrentRegistry();
+    async run(ctx) {
+      const current = await getCurrentRegistry(ctx.dir);
       if (/registry\.npmjs\.org/.test(current)) {
         return { level: "skip", detail: "当前已是官方源，无镜像滞后问题" };
       }
@@ -153,10 +156,10 @@ export const checks = [
   {
     id: "no-proxy-registry",
     title: "NO_PROXY 是否排除当前 registry",
-    async run() {
+    async run(ctx) {
       const noProxy = process.env.NO_PROXY || process.env.no_proxy || "";
-      const registry = await getCurrentRegistry();
-      const host = new URL(registry).host;
+      const registry = await getCurrentRegistry(ctx.dir);
+      const host = new URL(registry).host.toLowerCase();
       if (!noProxy) {
         return {
           level: "warn",
@@ -165,7 +168,7 @@ export const checks = [
         };
       }
       const parts = noProxy.split(",").map(s => s.trim()).filter(Boolean);
-      const covered = parts.some(p => host === p || host.endsWith("." + p) || host.endsWith(p));
+      const covered = isHostCoveredByNoProxy(noProxy, host);
       if (!covered) {
         return {
           level: "warn",
@@ -249,8 +252,9 @@ export const checks = [
   },
 ];
 
-async function getCurrentRegistry() {
-  const r = await runCmd("npm", ["config", "get", "registry"], { timeoutMs: 6000 });
+async function getCurrentRegistry(cwd) {
+  // 带 cwd 才能读到项目级 .npmrc（scope 覆盖、registry 重写都在这里）
+  const r = await runCmd("npm", ["config", "get", "registry"], { timeoutMs: 6000, cwd });
   if (r.ok && r.stdout.trim().startsWith("http")) return r.stdout.trim();
   return OFFICIAL_REGISTRY;
 }

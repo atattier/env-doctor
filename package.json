@@ -23,5 +23,20 @@
     "troubleshooting",
     "cli"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/atattier/env-doctor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/atattier/env-doctor/issues"
+  },
+  "homepage": "https://github.com/atattier/env-doctor#readme",
+  "author": "atattier",
+  "files": [
+    "bin",
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
   "license": "MIT"
 }
